@@ -1,0 +1,20 @@
+# binaries
+/bin/
+/forgerail
+*.exe
+*.test
+*.out
+
+# local env / data
+.env
+.pgdata/
+tmp/
+
+# editor
+.idea/
+.vscode/
+.DS_Store
+
+# typescript sdk
+sdk/typescript/node_modules/
+sdk/typescript/dist/
