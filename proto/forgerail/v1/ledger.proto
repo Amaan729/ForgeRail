@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package forgerail.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Amaan729/ForgeRail/gen/forgerail/v1;forgerailv1";
+
+// LedgerService is ForgeRail's internal API. All amounts are micro-USDC
+// (1 USDC = 1,000,000), matching USDC's 6 on-chain decimals.
+service LedgerService {
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+
+  // CreateTransfer is idempotent on idempotency_key. A transfer rejected for
+  // insufficient funds is returned with status REJECTED, not as an error.
+  rpc CreateTransfer(CreateTransferRequest) returns (CreateTransferResponse);
+  rpc GetTransfer(GetTransferRequest) returns (GetTransferResponse);
+
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+}
+
+message Account {
+  string id = 1;
+  string name = 2;
+  int64 balance_micros = 3;
+  bool allow_negative = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+enum TransferKind {
+  TRANSFER_KIND_UNSPECIFIED = 0;
+  TRANSFER_KIND_INTERNAL = 1;
+  TRANSFER_KIND_WITHDRAWAL = 2;
+}
+
+enum TransferStatus {
+  TRANSFER_STATUS_UNSPECIFIED = 0;
+  TRANSFER_STATUS_POSTED = 1;
+  TRANSFER_STATUS_PENDING = 2;
+  TRANSFER_STATUS_SUBMITTED = 3;
+  TRANSFER_STATUS_SETTLED = 4;
+  TRANSFER_STATUS_FAILED = 5;
+  TRANSFER_STATUS_REJECTED = 6;
+}
+
+message Transfer {
+  string id = 1;
+  string idempotency_key = 2;
+  TransferKind kind = 3;
+  string from_account_id = 4;
+  string to_account_id = 5;
+  string destination_address = 6;
+  int64 amount_micros = 7;
+  string memo = 8;
+  TransferStatus status = 9;
+  string failure_reason = 10;
+  string tx_hash = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+enum EntryDirection {
+  ENTRY_DIRECTION_UNSPECIFIED = 0;
+  ENTRY_DIRECTION_DEBIT = 1;
+  ENTRY_DIRECTION_CREDIT = 2;
+}
+
+message Entry {
+  int64 id = 1;
+  string transfer_id = 2;
+  string account_id = 3;
+  EntryDirection direction = 4;
+  int64 amount_micros = 5;
+  // post | hold | settle | release
+  string phase = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message CreateAccountRequest {
+  string name = 1;
+}
+
+message CreateAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  string id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message CreateTransferRequest {
+  // Required. Retrying with the same key returns the original transfer.
+  string idempotency_key = 1;
+  TransferKind kind = 2;
+  string from_account_id = 3;
+  // Internal transfers only.
+  string to_account_id = 4;
+  // Withdrawals only: 0x-prefixed address on Base.
+  string destination_address = 5;
+  int64 amount_micros = 6;
+  string memo = 7;
+}
+
+message CreateTransferResponse {
+  Transfer transfer = 1;
+  // True when this is a replay of an earlier request with the same key.
+  bool replayed = 2;
+}
+
+message GetTransferRequest {
+  string id = 1;
+}
+
+message GetTransferResponse {
+  Transfer transfer = 1;
+}
+
+message ListEntriesRequest {
+  string account_id = 1;
+  // Default 100, max 1000. Newest first.
+  int32 limit = 2;
+}
+
+message ListEntriesResponse {
+  repeated Entry entries = 1;
+}
