@@ -1,0 +1,302 @@
+openapi: 3.0.3
+info:
+  title: ForgeRail API
+  version: 0.1.0
+  description: |
+    REST API for the ForgeRail USDC ledger.
+
+    Amounts are decimal strings with up to 6 decimal places (USDC has 6 on-chain
+    decimals), e.g. `"12.50"`. Responses always use all 6 decimals: `"12.500000"`.
+
+    `POST /v1/transfers` requires an `Idempotency-Key` header. Sending the same
+    key again returns the original transfer with `Idempotent-Replayed: true` and
+    moves no money. Reusing a key with a different body is a 409.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      operationId: health
+      summary: Liveness check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /v1/accounts:
+    post:
+      operationId: createAccount
+      summary: Open an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccountRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/accounts/{id}:
+    get:
+      operationId: getAccount
+      summary: Get an account and its balance
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/accounts/{id}/entries:
+    get:
+      operationId: listEntries
+      summary: Ledger entries for an account, newest first
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Entry"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/transfers:
+    post:
+      operationId: createTransfer
+      summary: Move USDC between accounts, or withdraw it to an address on Base
+      description: |
+        Internal transfers post immediately (`posted`). Withdrawals hold the funds
+        (`pending`) and settle asynchronously: `submitted` once the transaction is
+        broadcast, then `settled` or `failed`.
+
+        Insufficient funds is not an error: the transfer is created with status
+        `rejected` and `failure_reason: insufficient_funds`.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 255
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTransferRequest"
+      responses:
+        "201":
+          description: Transfer created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+        "200":
+          description: Replay of an earlier request with the same key
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/transfers/{id}:
+    get:
+      operationId: getTransfer
+      summary: Get a transfer
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+        "404":
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Amount:
+      type: string
+      pattern: '^\d+(\.\d{1,6})?$'
+      example: "12.500000"
+    CreateAccountRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+    Account:
+      type: object
+      required: [id, name, balance, created_at]
+      properties:
+        id:
+          type: string
+          example: acct_0192f3a1c2d4e5f6a7b8c9d0e1f2
+        name:
+          type: string
+        balance:
+          $ref: "#/components/schemas/Amount"
+        created_at:
+          type: string
+          format: date-time
+    TransferKind:
+      type: string
+      enum: [internal, withdrawal]
+    TransferStatus:
+      type: string
+      enum: [posted, pending, submitted, settled, failed, rejected]
+    CreateTransferRequest:
+      type: object
+      required: [kind, from_account_id, amount]
+      properties:
+        kind:
+          $ref: "#/components/schemas/TransferKind"
+        from_account_id:
+          type: string
+        to_account_id:
+          type: string
+          description: Required for internal transfers.
+        destination_address:
+          type: string
+          description: Required for withdrawals. 0x-prefixed address on Base.
+          pattern: '^0x[0-9a-fA-F]{40}$'
+        amount:
+          $ref: "#/components/schemas/Amount"
+        memo:
+          type: string
+          maxLength: 500
+    Transfer:
+      type: object
+      required: [id, idempotency_key, kind, from_account_id, amount, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        idempotency_key:
+          type: string
+        kind:
+          $ref: "#/components/schemas/TransferKind"
+        from_account_id:
+          type: string
+        to_account_id:
+          type: string
+        destination_address:
+          type: string
+        amount:
+          $ref: "#/components/schemas/Amount"
+        memo:
+          type: string
+        status:
+          $ref: "#/components/schemas/TransferStatus"
+        failure_reason:
+          type: string
+        tx_hash:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Entry:
+      type: object
+      required: [id, transfer_id, account_id, direction, amount, phase, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        transfer_id:
+          type: string
+        account_id:
+          type: string
+        direction:
+          type: string
+          enum: [debit, credit]
+        amount:
+          $ref: "#/components/schemas/Amount"
+        phase:
+          type: string
+          enum: [post, hold, settle, release]
+        created_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - missing_idempotency_key
+                - not_found
+                - forbidden
+                - idempotency_conflict
+                - invalid_state
+                - settlement_unavailable
+                - internal
+            message:
+              type: string
