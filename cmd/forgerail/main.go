@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/Amaan729/ForgeRail/internal/chain"
 	"github.com/Amaan729/ForgeRail/internal/grpcapi"
+	"github.com/Amaan729/ForgeRail/internal/httpapi"
 	"github.com/Amaan729/ForgeRail/internal/ledger"
 	"github.com/Amaan729/ForgeRail/internal/pgstore"
 	"github.com/Amaan729/ForgeRail/internal/service"
@@ -95,6 +97,10 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		})
 	}
 	acts := &settlement.Activities{Store: store, Chain: ch}
+	if cfg.Chain == "fake" {
+		// the fake chain confirms in milliseconds, no point polling every 2s
+		acts.PollInterval = 100 * time.Millisecond
+	}
 
 	// settlement
 	var starter settlement.Starter
@@ -139,11 +145,29 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	healthpb.RegisterHealthServer(g, hs)
 	reflection.Register(g)
 
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() {
 		log.Info("gRPC listening", "addr", lis.Addr().String())
 		errc <- g.Serve(lis)
 	}()
+
+	// REST
+	var hsrv *http.Server
+	if cfg.HTTPAddr != "" {
+		hsrv = &http.Server{
+			Addr:              cfg.HTTPAddr,
+			Handler:           httpapi.New(svc, log),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      30 * time.Second,
+		}
+		go func() {
+			log.Info("REST listening", "addr", cfg.HTTPAddr)
+			if err := hsrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -154,11 +178,16 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		}
 	}
 	hs.Shutdown()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if hsrv != nil {
+		hsrv.Shutdown(shutdownCtx)
+	}
 	stopped := make(chan struct{})
 	go func() { g.GracefulStop(); close(stopped) }()
 	select {
 	case <-stopped:
-	case <-time.After(10 * time.Second):
+	case <-shutdownCtx.Done():
 		g.Stop()
 	}
 	return nil
