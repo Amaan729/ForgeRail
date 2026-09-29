@@ -21,11 +21,16 @@ func TestChaosLostResponseStillRunsHandler(t *testing.T) {
 		t.Fatalf("code=%d handled=%d", rec.Code, handled.Load())
 	}
 
-	// GETs are never touched
+	// GETs and other POSTs are never touched
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/transfers/x", nil))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("GET code=%d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/accounts", strings.NewReader("{}")))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /v1/accounts code=%d", rec.Code)
 	}
 }
 

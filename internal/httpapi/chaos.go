@@ -6,7 +6,8 @@ import (
 	"net/http/httptest"
 )
 
-// Chaos wraps a handler and breaks POST requests on purpose, for load tests:
+// Chaos wraps a handler and breaks POST /v1/transfers on purpose, for load
+// tests (other routes aren't idempotent, so breaking them proves nothing):
 //
 //   - errRate: fail with 503 before the request is handled
 //   - lostRate: handle the request (so it commits!) but throw the response
@@ -20,7 +21,7 @@ func Chaos(next http.Handler, errRate, lostRate float64) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/transfers" {
 			next.ServeHTTP(w, r)
 			return
 		}

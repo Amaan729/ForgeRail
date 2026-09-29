@@ -156,7 +156,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	if cfg.HTTPAddr != "" {
 		var handler http.Handler = httpapi.New(svc, log)
 		if cfg.ChaosErrRate > 0 || cfg.ChaosLostRate > 0 {
-			log.Warn("CHAOS MODE: randomly failing and dropping POST responses",
+			log.Warn("CHAOS MODE: randomly failing and dropping POST /v1/transfers responses",
 				"err_rate", cfg.ChaosErrRate, "lost_rate", cfg.ChaosLostRate)
 			handler = httpapi.Chaos(handler, cfg.ChaosErrRate, cfg.ChaosLostRate)
 		}
