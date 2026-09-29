@@ -35,6 +35,9 @@ type config struct {
 	FakeConfirm    time.Duration
 
 	Dev bool
+
+	ChaosErrRate  float64
+	ChaosLostRate float64
 }
 
 func loadConfig(args []string) (config, error) {
@@ -57,6 +60,8 @@ func loadConfig(args []string) (config, error) {
 	fs.Float64Var(&c.FakeRevertRate, "fake-revert-rate", envFloat("FORGERAIL_FAKE_REVERT_RATE", 0), "fake chain: chance a tx reverts")
 	fs.DurationVar(&c.FakeConfirm, "fake-confirm-after", envDuration("FORGERAIL_FAKE_CONFIRM_AFTER", 500*time.Millisecond), "fake chain: time to confirmation")
 	fs.BoolVar(&c.Dev, "dev", envBool("FORGERAIL_DEV", false), "dev mode: allow transfers out of system accounts (funding test accounts)")
+	fs.Float64Var(&c.ChaosErrRate, "chaos-error-rate", envFloat("FORGERAIL_CHAOS_ERROR_RATE", 0), "load testing: chance a POST fails with 503 before it is handled")
+	fs.Float64Var(&c.ChaosLostRate, "chaos-lost-response-rate", envFloat("FORGERAIL_CHAOS_LOST_RESPONSE_RATE", 0), "load testing: chance a POST is handled but the client gets a 503")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
