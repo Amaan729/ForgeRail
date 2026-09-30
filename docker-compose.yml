@@ -1,0 +1,52 @@
+# Local dependencies for ForgeRail.
+#
+#   docker compose up -d
+#   export DATABASE_URL=postgres://postgres@localhost:55432/forgerail?sslmode=disable
+#   export FORGERAIL_TEMPORAL_ADDR=localhost:7233
+#   go run ./cmd/forgerail -dev
+#
+# Temporal UI: http://localhost:8233
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: forgerail
+      # dev only, matches scripts/dev-postgres.sh
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    # Temporal CLI dev server (in-memory, single process). Fine for dev,
+    # not for anything you care about.
+    image: temporalio/temporal:latest
+    command: ["server", "start-dev", "--ip", "0.0.0.0"]
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+
+  forgerail:
+    build: .
+    profiles: ["app"] # `docker compose --profile app up` to run the API in docker too
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres@postgres:5432/forgerail?sslmode=disable
+      FORGERAIL_TEMPORAL_ADDR: temporal:7233
+      FORGERAIL_DEV: "true"
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+
+volumes:
+  pgdata:
