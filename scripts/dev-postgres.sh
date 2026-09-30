@@ -9,6 +9,16 @@ set -euo pipefail
 DATA="${PGDATA_DIR:-$(pwd)/.pgdata}"
 PORT="${FORGERAIL_PG_PORT:-55432}"
 
+# Homebrew's postgresql@N is keg-only, so initdb/pg_ctl often aren't on PATH
+if ! command -v initdb >/dev/null 2>&1; then
+	for d in /opt/homebrew/opt/postgresql@*/bin /usr/local/opt/postgresql@*/bin /usr/lib/postgresql/*/bin; do
+		if [ -x "$d/initdb" ]; then
+			PATH="$d:$PATH"
+			break
+		fi
+	done
+fi
+
 start() {
 	if [ ! -f "$DATA/PG_VERSION" ]; then
 		initdb -D "$DATA" -U postgres --auth=trust >/dev/null
