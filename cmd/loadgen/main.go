@@ -59,12 +59,14 @@ func main() {
 }
 
 type transfer struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	FromAccountID string `json:"from_account_id"`
-	ToAccountID   string `json:"to_account_id"`
-	Amount        string `json:"amount"`
-	Status        string `json:"status"`
+	ID            string    `json:"id"`
+	Kind          string    `json:"kind"`
+	FromAccountID string    `json:"from_account_id"`
+	ToAccountID   string    `json:"to_account_id"`
+	Amount        string    `json:"amount"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type client struct {
@@ -200,6 +202,7 @@ func run(ctx context.Context, o options) error {
 			mu.Unlock()
 		}()
 	}
+	loadStopped := time.Now()
 	wg.Wait()
 	loadTime := time.Since(began)
 
@@ -232,6 +235,26 @@ func run(ctx context.Context, o options) error {
 			time.Sleep(250 * time.Millisecond)
 		}
 	}
+
+	// how long withdrawals took to settle, from the server's own timestamps
+	// (created_at -> updated_at of the final status change), and how many
+	// were still settling after the load stopped
+	var settleLat []time.Duration
+	var finishedAfterStop int
+	var lastFinish time.Time
+	for _, t := range final {
+		if t.Kind != "withdrawal" || (t.Status != "settled" && t.Status != "failed") {
+			continue
+		}
+		settleLat = append(settleLat, t.UpdatedAt.Sub(t.CreatedAt))
+		if t.UpdatedAt.After(loadStopped) {
+			finishedAfterStop++
+		}
+		if t.UpdatedAt.After(lastFinish) {
+			lastFinish = t.UpdatedAt
+		}
+	}
+	slices.Sort(settleLat)
 
 	// expected balances from what the API told us
 	expected := start
@@ -268,12 +291,7 @@ func run(ctx context.Context, o options) error {
 		lat[i] = r.latency
 	}
 	slices.Sort(lat)
-	pct := func(p float64) time.Duration {
-		if len(lat) == 0 {
-			return 0
-		}
-		return lat[min(len(lat)-1, int(float64(len(lat))*p))].Round(100 * time.Microsecond)
-	}
+	pct := func(p float64) time.Duration { return pctOf(lat, p) }
 
 	ok := len(results)
 	fmt.Println()
@@ -287,6 +305,10 @@ func run(ctx context.Context, o options) error {
 	fmt.Printf("gave up:     %d requests failed after %d retries\n", cnt.failed.Load(), o.retries)
 	fmt.Printf("outcomes:    %d internal posted, %d withdrawals settled, %d withdrawals failed+released, %d rejected, %d still in flight\n",
 		posted, settled, failedWd, rejected, len(pending))
+	fmt.Printf("settlement:  withdrawal created -> settled/failed p50 %s  p95 %s  p99 %s  max %s\n",
+		pctOf(settleLat, 0.50), pctOf(settleLat, 0.95), pctOf(settleLat, 0.99), pctOf(settleLat, 1))
+	fmt.Printf("backlog:     %d withdrawals finished after the load stopped, the last one %s after\n",
+		finishedAfterStop, max(0, lastFinish.Sub(loadStopped)).Round(10*time.Millisecond))
 	fmt.Printf("balances:    %d of %d accounts differ from what the API responses imply\n", drift, len(expected))
 
 	if drift > 0 || len(pending) > 0 {
@@ -335,4 +357,16 @@ func retryPost(ctx context.Context, c *client, o options, key string, body map[s
 		}
 	}
 	return err
+}
+
+// pctOf returns the p-th percentile of an already sorted slice.
+func pctOf(sorted []time.Duration, p float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	d := sorted[min(len(sorted)-1, int(float64(len(sorted))*p))]
+	if d > time.Second {
+		return d.Round(10 * time.Millisecond)
+	}
+	return d.Round(100 * time.Microsecond)
 }
