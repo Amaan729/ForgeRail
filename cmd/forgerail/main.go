@@ -19,6 +19,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -120,7 +121,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		}
 		defer tc.Close()
 		if cfg.RunWorker {
-			w := settlement.NewWorker(tc, acts)
+			w := settlement.NewWorker(tc, settlement.TaskQueue, acts, worker.Options{})
 			if err := w.Start(); err != nil {
 				return fmt.Errorf("temporal worker: %w", err)
 			}

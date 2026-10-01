@@ -42,9 +42,13 @@ func (s TemporalStarter) StartWithdrawal(ctx context.Context, transferID string)
 	return err
 }
 
-// NewWorker registers the workflow and activities on the settlement queue.
-func NewWorker(c client.Client, acts *Activities) worker.Worker {
-	w := worker.New(c, TaskQueue, worker.Options{})
+// NewWorker registers the workflow and activities on a task queue (empty
+// means TaskQueue).
+func NewWorker(c client.Client, queue string, acts *Activities, opts worker.Options) worker.Worker {
+	if queue == "" {
+		queue = TaskQueue
+	}
+	w := worker.New(c, queue, opts)
 	w.RegisterWorkflow(WithdrawalWorkflow)
 	w.RegisterActivity(acts)
 	return w
