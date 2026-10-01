@@ -22,6 +22,7 @@ type config struct {
 	TemporalAddr      string // empty = in-process LocalRunner
 	TemporalNamespace string
 	RunWorker         bool
+	WorkerPollers     int
 
 	Chain string // fake | base
 
@@ -50,6 +51,7 @@ func loadConfig(args []string) (config, error) {
 	fs.StringVar(&c.TemporalAddr, "temporal-addr", env("FORGERAIL_TEMPORAL_ADDR", ""), "Temporal frontend host:port; empty runs settlement in-process")
 	fs.StringVar(&c.TemporalNamespace, "temporal-namespace", env("FORGERAIL_TEMPORAL_NAMESPACE", "default"), "Temporal namespace")
 	fs.BoolVar(&c.RunWorker, "worker", envBool("FORGERAIL_WORKER", true), "also run the Temporal worker in this process")
+	fs.IntVar(&c.WorkerPollers, "worker-pollers", int(envInt("FORGERAIL_WORKER_POLLERS", 8)), "Temporal worker pollers per task type (SDK default is 2)")
 	fs.StringVar(&c.Chain, "chain", env("FORGERAIL_CHAIN", "fake"), "fake|base")
 	fs.StringVar(&c.BaseRPCURL, "base-rpc-url", env("FORGERAIL_BASE_RPC_URL", "https://sepolia.base.org"), "Base JSON-RPC endpoint")
 	fs.Int64Var(&c.BaseChainID, "base-chain-id", envInt("FORGERAIL_BASE_CHAIN_ID", chain.ChainIDBaseSepolia), "expected chain id")

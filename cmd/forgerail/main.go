@@ -121,7 +121,10 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		}
 		defer tc.Close()
 		if cfg.RunWorker {
-			w := settlement.NewWorker(tc, settlement.TaskQueue, acts, worker.Options{})
+			w := settlement.NewWorker(tc, settlement.TaskQueue, acts, worker.Options{
+				MaxConcurrentWorkflowTaskPollers: cfg.WorkerPollers,
+				MaxConcurrentActivityTaskPollers: cfg.WorkerPollers,
+			})
 			if err := w.Start(); err != nil {
 				return fmt.Errorf("temporal worker: %w", err)
 			}
