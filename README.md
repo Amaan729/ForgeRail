@@ -105,10 +105,13 @@ The server migrates the schema on startup.
 **With Temporal:**
 
 ```sh
-docker compose up -d                        # Postgres + Temporal dev server (UI on :8233)
+brew install temporal && temporal server start-dev   # or: docker compose up -d
 export FORGERAIL_TEMPORAL_ADDR=localhost:7233
-go run ./cmd/forgerail -dev                 # also runs the worker
+go run ./cmd/forgerail -dev                          # also runs the worker
 ```
+
+The Temporal UI is at http://localhost:8233; every withdrawal shows up as a
+`withdrawal-<transfer id>` workflow.
 
 Without `FORGERAIL_TEMPORAL_ADDR` withdrawals are settled by `LocalRunner`,
 which runs the same activities in a goroutine. Handy for dev, but not durable.
@@ -154,6 +157,7 @@ the SDK is in [`sdk/typescript`](sdk/typescript).
 ```sh
 make test              # unit tests, memory store, Temporal test env
 make db-up test-db     # + the Postgres conformance suite
+FORGERAIL_TEST_TEMPORAL_ADDR=localhost:7233 go test ./internal/settlement/   # + real Temporal server
 cd sdk/typescript && npm ci && npm test
 ```
 
@@ -164,6 +168,11 @@ cd sdk/typescript && npm ci && npm test
 - `internal/settlement` runs the workflow in Temporal's test environment
   against the real activities with a fake chain that fails broadcasts
   (including *after* accepting the tx) and reverts transactions.
+- `internal/settlement/temporal_integration_test.go` runs against a real
+  Temporal server: 20 concurrent starts for one withdrawal attach to a single
+  run, starting it again after it finished doesn't create a new run, and
+  retried API requests through the service layer settle exactly once. CI runs
+  these against the Temporal dev server.
 - `internal/httpapi/contract_test.go` fails if the routes or JSON fields drift
   from `openapi.yaml`.
 
@@ -194,37 +203,58 @@ checks
   [ok  ] ledger sums to zero                    sum = 0.000000
 ```
 
-### Load test with injected failures
+### Load test through Temporal with injected failures
 
 `cmd/loadgen` drives the REST API at a fixed rate and retries 5xx/timeouts
-with the same idempotency key. The server was started with chaos turned on:
-2% of transfer requests fail before they're handled, 5% are handled and then
-the response is thrown away (the nasty case), and the fake chain fails 20% of
-broadcasts and reverts 5% of transactions.
+with the same idempotency key. Every withdrawal is settled by its own
+`WithdrawalWorkflow` on a Temporal server. The server was started with chaos
+turned on: 2% of transfer requests fail before they're handled, 5% are handled
+and then the response is thrown away (the nasty case), and the fake chain
+fails 20% of broadcasts and reverts 5% of transactions.
 
 ```sh
-go run ./cmd/forgerail -dev -database-url "$DATABASE_URL" \
-  -fake-broadcast-fail-rate 0.2 -fake-revert-rate 0.05 \
+temporal server start-dev
+go run ./cmd/forgerail -dev -database-url "$DATABASE_URL" -temporal-addr localhost:7233 \
+  -fake-broadcast-fail-rate 0.2 -fake-revert-rate 0.05 -fake-confirm-after 300ms \
   -chaos-error-rate 0.02 -chaos-lost-response-rate 0.05
 go run ./cmd/loadgen -rps 400 -duration 60s
 ```
 
+Everything on one laptop (Apple M5 Pro): API, worker, Postgres 14 and the
+Temporal 1.32 dev server (in-memory).
+
 ```
-load:        24000 requests in 1m0.001s, 24000 succeeded = 400.0 successful transfers/s (target 400)
-latency:     p50 1ms  p95 34.4ms  p99 49.5ms  max 502.3ms  (end to end, including retries)
-attempts:    25847 total, 1847 retried, 1847 5xx, 0 4xx, 0 network errors
-replays:     1255 retries hit a transfer that had already committed (lost response)
+load:        23992 requests in 1m0.006s, 23992 succeeded = 399.8 successful transfers/s (target 400)
+latency:     p50 900µs  p95 34.4ms  p99 50.2ms  max 1.37s  (end to end, including retries)
+attempts:    25754 total, 1762 retried, 1762 5xx, 0 4xx, 0 network errors
+replays:     1188 retries hit a transfer that had already committed (lost response)
 gave up:     0 requests failed after 6 retries
-outcomes:    19152 internal posted, 4575 withdrawals settled, 273 withdrawals failed+released, 0 rejected, 0 still in flight
+outcomes:    19184 internal posted, 4573 withdrawals settled, 235 withdrawals failed+released, 0 rejected, 0 still in flight
+settlement:  withdrawal created -> settled/failed p50 621ms  p95 2.71s  p99 5.64s  max 1m4.09s
+backlog:     98 withdrawals finished after the load stopped, the last one 59.7s after
 balances:    0 of 200 accounts differ from what the API responses imply
 ```
 
-Same setup at 1,500 req/s for 20s: 30,000/30,000 succeeded, p99 48 ms, no
-balance drift. The latency tail is mostly the client's retry backoff after
-injected 503s.
+`temporal workflow count` before and after the run: 4,808 new
+`WithdrawalWorkflow` runs (one per withdrawal), all completed, none failed.
 
-These runs used the in-process `LocalRunner` for settlement, not a Temporal
-cluster. The Temporal path is covered by the workflow tests.
+How to read the settlement numbers:
+
+- The median stayed at 0.61–0.63s in every 10-second window of the run, so
+  settlement kept up with ~80 new workflows a second instead of building a
+  queue. Most of that 0.6s is the fake chain's 300 ms confirmation time.
+- The tail is the injected broadcast failures. Temporal retries `Broadcast`
+  with 1s, 2s, 4s, ... backoff, so one failure costs ~1s and the 64s outlier
+  is a broadcast that failed six times in a row before attempt 7 went
+  through.
+- With the SDK default of 2 pollers per task type, the worker had occasional
+  ~4s gaps between back-to-back activities late in the run (p95 3.4s).
+  `-worker-pollers` now defaults to 8, which kept the sampled dispatch gap
+  under 100 ms.
+
+With in-process settlement instead of Temporal (`LocalRunner`), the same
+setup also held 400 req/s for 60s, and 1,500 req/s for 20s (30,000/30,000,
+no balance drift). Temporal on a laptop wasn't pushed past 400.
 
 ## Layout
 
