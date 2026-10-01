@@ -23,15 +23,25 @@ jobs:
           --health-retries 10
     env:
       FORGERAIL_TEST_DATABASE_URL: postgres://postgres@localhost:5432/forgerail_test?sslmode=disable
+      FORGERAIL_TEST_TEMPORAL_ADDR: localhost:7233
     steps:
       - uses: actions/checkout@v4
+      - name: start Temporal dev server
+        run: |
+          docker run -d --name temporal -p 7233:7233 temporalio/temporal:latest server start-dev --ip 0.0.0.0
+          for i in $(seq 1 60); do
+            docker logs temporal 2>&1 | grep -q 'Temporal Server:' && exit 0
+            sleep 2
+          done
+          docker logs temporal
+          exit 1
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
-      - name: test (incl. Postgres conformance suite)
+      - name: test (incl. Postgres conformance suite and Temporal integration tests)
         run: go test -race -count=1 ./...
       - name: replay 20k transfers against Postgres
         run: go run ./cmd/replay -database-url "$FORGERAIL_TEST_DATABASE_URL" -reset -n 20000 -workers 32
